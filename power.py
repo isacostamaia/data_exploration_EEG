@@ -50,6 +50,7 @@ def plot_fmrs(frms):
     
     #Trimmed mean of columns taking out 10% oh highest and lowest values
     ax2.plot(stats.trim_mean(frms, proportiontocut=0.1, axis=0))
+    # ax2.set_title("Column trimmed mean")
     ax2.tick_params(which='major', labelrotation=90)
     
     
