@@ -16,17 +16,18 @@ def field_root_mean_square(class_epochs):
     """
     print(type(class_epochs))
     
-    if isinstance(class_epochs,mne.EpochsArray):
+    if isinstance(class_epochs,mne.EpochsArray) or isinstance(class_epochs, mne.Epochs):
         class_epochs_data = class_epochs.get_data() #array of shape (n_epochs, n_channels, n_times)
     elif isinstance(class_epochs, np.ndarray):
         class_epochs_data = class_epochs  #array of shape (n_epochs, n_channels, n_times)
     else:
         raise TypeError(f"class_epochs must be EpochsArray or ndarray type, not {type(class_epochs)}")
     
-    n = class_epochs_data.shape[1] #n_channels
-    centering_matrix = np.eye(n) - np.ones((n, n)) / n
-    centered_Xks = [centering_matrix@Xk for Xk in class_epochs_data] #centered_Xk has each column with zero mean
-
+    # n = class_epochs_data.shape[1] #n_channels
+    # centering_matrix = np.eye(n) - np.ones((n, n)) / n
+    # centered_Xks = [centering_matrix@Xk for Xk in class_epochs_data] #centered_Xk has each column with zero mean
+    centered_Xks = class_epochs_data
+    
     #frms_i is the std of the columns of centered_Xk
     frms = np.stack([Xk.std(axis=0) for Xk in centered_Xks])  #each pfmrs_i has dim = n_times, frms will be n_epochs x n_times
 
@@ -62,3 +63,5 @@ def plot_fmrs(frms):
     
     dummy_ax1.set_axis_off()
     dummy_ax2.set_axis_off()
+
+    plt.show()
