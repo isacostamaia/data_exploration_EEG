@@ -23,9 +23,6 @@ def field_root_mean_square(class_epochs):
     else:
         raise TypeError(f"class_epochs must be EpochsArray or ndarray type, not {type(class_epochs)}")
     
-    # n = class_epochs_data.shape[1] #n_channels
-    # centering_matrix = np.eye(n) - np.ones((n, n)) / n
-    # centered_Xks = [centering_matrix@Xk for Xk in class_epochs_data] #centered_Xk has each column with zero mean
     centered_Xks = class_epochs_data
     
     #frms_i is the std of the columns of centered_Xk
@@ -57,7 +54,6 @@ def plot_fmrs(frms):
     
     #Trimmed mean of columns taking out 10% oh highest and lowest values
     ax2.plot(stats.trim_mean(frms, proportiontocut=0.1, axis=0))
-    # ax2.set_title("Column trimmed mean")
     ax2.tick_params(which='major', labelrotation=90)
     
     
