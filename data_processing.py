@@ -120,142 +120,163 @@ def apply_weights(epochs, weights):
     return epochs_
 
 class Lagger:
-    pass
-
-def find_local_max_idx(array, valid_criteria=None, smooth=False, n_smooth=3):
     """
-    Find indexes of local maxima value.
-    If valid_criteria = "strict", local maximas should be >= 66% of the global maxima,
-    Returns: indexes of local maxima
-    """
-    #smooth by averaging with n_neigh neighbour points
-    if smooth:
-        array = np.convolve(array, np.ones(n_smooth)/n_smooth, mode='same') 
-    max_idx = argrelextrema(array, np.greater)[0]
-    #get valid idx 
-    if valid_criteria == "strict":
-        #  local max >= 66% of max
-        valid_idx = np.where(array>=0.66*np.max(array))[0]
-        #get valid local extrema idx
-        valid_idx = valid_idx[np.isin(valid_idx, max_idx)]
-    else:
-        valid_idx = max_idx
-    return valid_idx
-
-def lagged_epochs(epoch, E):
-    """
-        For a given epoch, create a list of lagged versions of it of len=2*E+1. Creates central sample [E:-E] and 2*E lagged versions around it
-        Returns: list of lagged epochs
-    """
-    lagged_e_is=[]
-    for eps in range(2*E+1):
-        e_i = copy.deepcopy(epoch)
-        e_i.crop(tmin=e_i.times[eps], tmax = e_i.times[len(e_i.times)+eps-2*E-1], include_tmax=True)
-        lagged_e_is.append(e_i)
-        del e_i  
-    return lagged_e_is
-
-def apply_lags(epochs, E, lags_list): #should be called correct_lags
-    """
-    Given a list of lags of length equal to the number of epochs in the epochs object, and full non-cropped epochs with its cropping parameter E, recreates cropped epochs lagged (corrected) of the list value
-    epochs: full non-cropped epochs
-    E: maximum lag
-    lags_list: list of lags of length equal to number of epochs
-    Returns
-    """
-
-    #save tmin from epoch that will be used as reference to rebuild epochs object
-    ref_epoch_id = np.argmin(lags_list) 
-    ref_epoch_tmin = epochs[ref_epoch_id].times[E]  #get time of ref_epoch at cropping sample as tmin
-
-
-    epochs_data = epochs.get_data() 
-    epochs_data_cropped_lagged = np.stack([e_i[:,E+l:len(epochs.times)-E+l] for e_i, l in zip(epochs_data, lags_list)])
-
-    lagged_epochs = mne.EpochsArray(epochs_data_cropped_lagged,
-                                        info = epochs.info, 
-                                        events = epochs.events,
-                                        tmin= ref_epoch_tmin,
-                                        event_id = epochs.event_id, 
-                                        reject = epochs.reject,
-                                        baseline = epochs.baseline,
-                                        proj = epochs.proj,
-                                        metadata = epochs.metadata,
-                                        selection = epochs.selection,
-                                        drop_log = epochs.drop_log, 
-                                        verbose = 'WARNING'
-                                        )
-    return lagged_epochs
-                        
-def compute_lags(class_epochs, similarity="covariance", criteria_sim="greatest_local_max", E=None):
-    """
-    Compute, for each epoch, the lag that amounts to the highest covariance between each epoch and the exclusive epochs average
-    E: Maximum allowed time-shift in samples unit
-    Returns: list of lags of len(class_epochs)
-    """
-    if not E:
-        sfreq = class_epochs.info['sfreq'] #sampling frequency
-        E = math.floor(40*1e-3*sfreq) #Maximum allowed time-shift in samples unit. It should correspond to something around and less than 40ms 
-    print("E: ", E)
-    max_num_it = 2*E
-    class_epochs_cropped = copy.deepcopy(class_epochs).crop(tmin=class_epochs.times[E], tmax = class_epochs.times[-E-1], include_tmax=True) #will only look to an epoch in window interval so we can use border values to compute the lag
-
-    cond = E-1
-    epochs_idx = np.arange(len(class_epochs_cropped))
-    cond_hist = []
-    num_it = 0
-
-
-    while cond < E and num_it < max_num_it:
-        lags_list=[]
-        print("Iteration num: ", num_it)
-        for i, e_i in enumerate (class_epochs.iter_evoked()):
-            #(filtered and weighted) ensemble average excluding the current epoch/sweep
-            avg_epochs_m1 = class_epochs_cropped[np.where(epochs_idx!= i)[0]].average(picks="all").get_data()
-            #set of (filtered and weighted) single lagged i epoch estimation, for all lags
-            lagged_e_is = lagged_epochs(e_i, E) #lags between -E and +E
-            
-            if similarity == "covariance":
-                sim = np.array([(1/l_ei.get_data().shape[-1])*np.matrix.trace(l_ei.get_data()@avg_epochs_m1.T) for l_ei in lagged_e_is]).ravel()
-            elif similarity == "correlation":
-                sim = np.array([np.corrcoef(l_ei.get_data()[0], avg_epochs_m1)[0,1] for l_ei in lagged_e_is])
-            else:
-                raise ValueError("similarity should be amongst 'covariance' and 'correlation'")
-                
-            if criteria_sim == "strict_local_max": #get local max that is greater or equal to 66% of global max and minimizes the lag
-                best_idx = find_local_max_idx(sim, valid_criteria="strict") - E #reset reference. Sample [E:-E] corresponds to lag=0, sample [0:len(e_i)-2E] has lag =-E etc.
-                if best_idx.size>0:
-                    best_idx = min(best_idx, key=abs) #get the smallest index (corresponds to the smallest lag)
-                else:
-                    best_idx = 0 #if there is no local max that matches constraints, the lag is 0
-         
-            elif criteria_sim == "local_max_min_lag": #get local max that minimizes the lag
-                best_idx = find_local_max_idx(sim, valid_criteria=None) - E #reset reference. Sample [E:-E] corresponds to lag=0, sample [0:len(e_i)-2E] has lag =-E etc.
-                if best_idx.size>0:
-                    best_idx = min(best_idx, key=abs) #get the smallest index (corresponds to the smallest lag)
-                else:
-                    best_idx = 0 #if there is no local max that matches constraints, the lag is 0            
-            
-            elif criteria_sim == "greatest_local_max": #get greatest local maxima (regardless of min lag)
-                best_idx = find_local_max_idx(sim, valid_criteria=None)
-                if best_idx.size>0:
-                    best_idx = best_idx[np.argmax(sim[best_idx])] #get index of greatest local max
-                    best_idx = best_idx - E #reset reference. Sample [E:-E] corresponds to lag=0, sample [0:len(e_i)-2E] has lag =-E etc.
-                else:
-                    best_idx = 0 #if there is no local max that matches constraints, the lag is 0
-           
-            elif criteria_sim == "global_max": #get simply the local max, regardless of lag value
-                best_idx = np.argmax(sim) - E #reset reference. Obs. if values in sim are equal, by default takes the smallest argument
-            else:
-                raise ValueError("criteria_sim should be amongst 'strict_local_max', 'local_max_min_lag', \
-                'greatest_local_max', 'global_max' ")
-            lags_list.append(best_idx) 
-
-        #update class_epochs_cropped
-        class_epochs_cropped =  apply_lags(class_epochs, E, lags_list)       
-        cond = sum(abs(lag) for lag in lags_list)
-        cond_hist.append(cond)
-        num_it+=1
-        
-    return lags_list, cond_hist
     
+    """
+
+    def __init__(self, epochs, E = None):
+        """
+        epochs: full non-cropped non-lagged epochs object
+        E: Maximum allowed time-shift in samples unit
+        """
+        
+        self.epochs = copy.deepcopy(epochs)
+        if not E:
+            sfreq = self.epochs.info['sfreq'] #sampling frequency
+            E = math.floor(40*1e-3*sfreq) #Maximum allowed time-shift in samples unit. It should correspond to something around and less than 40ms 
+        self.E = E
+        
+    def __find_local_max_idx(self, array, valid_criteria=None, smooth=False, n_smooth=3):
+        """
+        Find indexes of local maxima value.
+        If valid_criteria = "strict", local maximas should be >= 66% of the global maxima
+
+        array: array in which local maxima should be found
+        Returns: indexes of local maxima
+        """
+        #smooth by averaging with n_neigh neighbour points
+        if smooth:
+            array = np.convolve(array, np.ones(n_smooth)/n_smooth, mode='same') 
+        max_idx = argrelextrema(array, np.greater)[0]
+        #get valid idx 
+        if valid_criteria == "strict":
+            #  local max >= 66% of max
+            valid_idx = np.where(array>=0.66*np.max(array))[0]
+            #get valid local extrema idx
+            valid_idx = valid_idx[np.isin(valid_idx, max_idx)]
+        else:
+            valid_idx = max_idx
+        return valid_idx
+
+    def __lagged_epochs(self, epoch):
+        """
+            For a given epoch, create a list of lagged versions of it of len=2*E+1. Creates central sample [E:-E] and 2*E lagged versions around it
+            epochs: single-epochs object to be lagged (step = 1)
+            Returns: list of lagged epochs
+        """
+        lagged_e_is=[]
+        for eps in range(2*self.E+1):
+            e_i = copy.deepcopy(epoch)
+            e_i.crop(tmin=e_i.times[eps], tmax = e_i.times[len(e_i.times)+eps-2*self.E-1], include_tmax=True)
+            lagged_e_is.append(e_i)
+            del e_i  
+        return lagged_e_is
+
+    def correct_lags(self, lags_list): 
+        """
+        Given a list of lags of length equal to the number of epochs in the self.epochs object (full non_cropped epochs) recreates cropped epochs lag-corrected according to the lags_list values
+
+        lags_list: list of lags of length equal to number of epochs in self.epochs
+        Returns: epochs object with each epoch corrected according to its lag value (obs: resulting epochs object will be of shape (n_epochs, n_channels, n_times-2*E))
+        """
+    
+        #save tmin from epoch that will be used as reference to rebuild epochs object
+        ref_epoch_id = np.argmin(lags_list) 
+        ref_epoch_tmin = self.epochs[ref_epoch_id].times[self.E]  #get time of ref_epoch at cropping sample as tmin
+    
+    
+        epochs_data = self.epochs.get_data() 
+        epochs_data_cropped_lagged = np.stack([e_i[:,self.E+l:len(self.epochs.times)-self.E+l] for e_i, l in zip(epochs_data, lags_list)])
+    
+        lagged_epochs = mne.EpochsArray(epochs_data_cropped_lagged,
+                                            info = self.epochs.info, 
+                                            events = self.epochs.events,
+                                            tmin= ref_epoch_tmin,
+                                            event_id = self.epochs.event_id, 
+                                            reject = self.epochs.reject,
+                                            baseline = self.epochs.baseline,
+                                            proj = self.epochs.proj,
+                                            metadata = self.epochs.metadata,
+                                            selection = self.epochs.selection,
+                                            drop_log = self.epochs.drop_log, 
+                                            verbose = 'WARNING'
+                                            )
+        return lagged_epochs
+                        
+    def compute_lags(self, similarity="covariance", criteria_sim="greatest_local_max"):
+        """
+        Compute, for each epoch, the lag that amounts to the highest covariance between each epoch and the exclusive epochs average
+        Returns: list of lags of len(self.epochs)
+        """
+        
+        max_num_it = 2*self.E
+        epochs_cropped = copy.deepcopy(self.epochs).crop(tmin=self.epochs.times[self.E], tmax = self.epochs.times[-self.E-1], include_tmax=True) #will only look to an epoch in window interval so we can use border values to compute the lag
+    
+        cond = self.E-1
+        epochs_idx = np.arange(len(epochs_cropped))
+        cond_hist = []
+        num_it = 0
+    
+    
+        while cond < self.E and num_it < max_num_it:
+            lags_list=[]
+            print("Iteration num: ", num_it)
+            for i, e_i in enumerate (self.epochs.iter_evoked()):
+                #(filtered and weighted) ensemble average excluding the current epoch/sweep
+                avg_epochs_m1 = epochs_cropped[np.where(epochs_idx!= i)[0]].average(picks="all").get_data()
+                #set of (filtered and weighted) single lagged i epoch estimation, for all lags
+                lagged_e_is = self.__lagged_epochs(e_i) #lags between -E and +E
+                
+                if similarity == "covariance":
+                    sim = np.array([(1/l_ei.get_data().shape[-1])*np.matrix.trace(l_ei.get_data()@avg_epochs_m1.T) for l_ei in lagged_e_is]).ravel()
+                elif similarity == "correlation":
+                    sim = np.array([np.corrcoef(l_ei.get_data()[0], avg_epochs_m1)[0,1] for l_ei in lagged_e_is])
+                else:
+                    raise ValueError("similarity should be amongst 'covariance' and 'correlation'")
+                    
+                if criteria_sim == "strict_local_max": #get local max that is greater or equal to 66% of global max and minimizes the lag
+                    best_idx = self.__find_local_max_idx(sim, valid_criteria="strict") - self.E #reset reference. Sample [E:-E] corresponds to lag=0, sample [0:len(e_i)-2E] has lag =-E etc.
+                    if best_idx.size>0:
+                        best_idx = min(best_idx, key=abs) #get the smallest index (corresponds to the smallest lag)
+                    else:
+                        best_idx = 0 #if there is no local max that matches constraints, the lag is 0
+             
+                elif criteria_sim == "local_max_min_lag": #get local max that minimizes the lag
+                    best_idx = self.__find_local_max_idx(sim, valid_criteria=None) - self.E #reset reference. Sample [E:-E] corresponds to lag=0, sample [0:len(e_i)-2E] has lag =-E etc.
+                    if best_idx.size>0:
+                        best_idx = min(best_idx, key=abs) #get the smallest index (corresponds to the smallest lag)
+                    else:
+                        best_idx = 0 #if there is no local max that matches constraints, the lag is 0            
+                
+                elif criteria_sim == "greatest_local_max": #get greatest local maxima (regardless of min lag)
+                    best_idx = self.__find_local_max_idx(sim, valid_criteria=None)
+                    if best_idx.size>0:
+                        best_idx = best_idx[np.argmax(sim[best_idx])] #get index of greatest local max
+                        best_idx = best_idx - self.E #reset reference. Sample [E:-E] corresponds to lag=0, sample [0:len(e_i)-2E] has lag =-E etc.
+                    else:
+                        best_idx = 0 #if there is no local max that matches constraints, the lag is 0
+               
+                elif criteria_sim == "global_max": #get simply the local max, regardless of lag value
+                    best_idx = np.argmax(sim) - self.E #reset reference. Obs. if values in sim are equal, by default takes the smallest argument
+                else:
+                    raise ValueError("criteria_sim should be amongst 'strict_local_max', 'local_max_min_lag', \
+                    'greatest_local_max', 'global_max' ")
+                lags_list.append(best_idx) 
+    
+            #update epochs_cropped
+            epochs_cropped =  self.correct_lags(lags_list)       
+            cond = sum(abs(lag) for lag in lags_list)
+            cond_hist.append(cond)
+            num_it+=1
+            
+        del epochs_cropped
+        
+        return lags_list, cond_hist
+
+    def compute_and_correct_lags(self,  similarity="covariance", criteria_sim="greatest_local_max"):
+        """
+        Compute lags_list and use it to correct epochs given in constructor (obs: resulting epochs object will be of shape (n_epochs, n_channels, n_times-2*E))
+        """
+        self.lags_list, self.cond_hist = self.compute_lags(similarity="covariance", criteria_sim="greatest_local_max")
+        corrected_epochs = self.correct_lags(self.lags_list)
+        return corrected_epochs
