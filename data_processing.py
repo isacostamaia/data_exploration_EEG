@@ -50,7 +50,7 @@ class SpatialFilter:
         """
         epochs_data = self.epochs.get_data()*1e6 #n_epochs x n_channels x n_times using epochs from all classes
         covs = np.stack([e_i@e_i.T/e_i.shape[-1] for e_i in epochs_data]) #n_epochs x n_channels x n_channels
-        Cs = np.mean(covs, axis=0) #n_channels x n_channels
+        Cs = np.mean(covs, axis=0) #n_channels x n_channels (1.12)
         
         X_bar_class = self.epochs[class_].average().get_data()*1e6
         C_bar_class = (1/X_bar_class.shape[-1])* (X_bar_class)@(X_bar_class.T) #n_channels x n_channels
